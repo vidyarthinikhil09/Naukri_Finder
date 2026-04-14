@@ -38,50 +38,46 @@ async def fetch_from_apollo(domain: str) -> str | None:
         
     return None
 
-async def fetch_from_skrapp(domain: str) -> str | None:
+async def fetch_from_hunter(domain: str) -> str | None:
     """
-    Fetches a generic email from Skrapp.io for a given domain.
+    Fetches a generic email from Hunter.io for a given domain as a fallback.
     """
-    api_key = os.getenv("SKRAPP_API_KEY", settings.SKRAPP_API_KEY)
+    api_key = os.getenv("HUNTER_API_KEY", settings.HUNTER_API_KEY)
     if not api_key:
-        logger.warning("Skrapp API key not set.")
+        logger.warning("Hunter API key not set.")
         return None
         
-    url = f"https://api.skrapp.io/api/v2/domain/{domain}"
-    headers = {
-        "X-Access-Key": api_key
-    }
+    url = f"https://api.hunter.io/v2/domain-search?domain={domain}&api_key={api_key}"
     
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(url, headers=headers)
+            response = await client.get(url)
             response.raise_for_status()
             data = response.json()
             
-            emails = data.get("emails", [])
-            if emails and isinstance(emails, list) and emails[0].get("email"):
-                return emails[0]["email"]
+            emails = data.get("data", {}).get("emails", [])
+            if emails and len(emails) > 0 and emails[0].get("value"):
+                return emails[0]["value"]
     except httpx.HTTPError as e:
-        logger.error(f"Skrapp HTTP error for {domain}: {e}")
+        logger.error(f"Hunter HTTP error for {domain}: {e}")
     except Exception as e:
-        logger.error(f"Unexpected Skrapp error for {domain}: {e}")
+        logger.error(f"Unexpected Hunter error for {domain}: {e}")
         
     return None
 
 async def resolve_contact_waterfall(domain: str) -> dict:
     """
-    Orchestrates the contact resolution waterfall: Apollo -> Skrapp.
-    Returns a dictionary matching the Pydantic schema.
+    Orchestrates the contact resolution waterfall: Apollo -> Hunter.
     """
     # 1. Try Apollo
     email = await fetch_from_apollo(domain)
     if email:
         return {"email": email, "source": "Apollo", "status": "FOUND"}
         
-    # 2. Try Skrapp
-    email = await fetch_from_skrapp(domain)
+    # 2. Try Hunter
+    email = await fetch_from_hunter(domain)
     if email:
-        return {"email": email, "source": "Skrapp", "status": "FOUND"}
+        return {"email": email, "source": "Hunter", "status": "FOUND"}
         
     # 3. Failed
     return {"email": None, "source": None, "status": "FAILED"}
