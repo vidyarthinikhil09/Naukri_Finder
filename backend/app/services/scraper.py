@@ -1,20 +1,30 @@
 import httpx
 import os
 import logging
+import urllib.parse  # Add this import to handle URL encoding
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-ACTOR_ID = "SOME_DEV/linkedin-job-scraper"
+ACTOR_ID = "hKByXkMQaC5Qt9UMN" # Ensure this matches your actor
 
 async def run_apify_scraper(search_query: str, limit: int = 5) -> list[dict]:
     """
     Runs the Apify job scraper Actor synchronously and returns the normalized dataset.
     """
     url = f"https://api.apify.com/v2/acts/{ACTOR_ID}/run-sync-get-dataset-items?token={settings.APIFY_TOKEN}"
+    
+    # 1. Convert the plain text search_query into a valid LinkedIn Search URL
+    encoded_query = urllib.parse.quote(search_query)
+    linkedin_url = f"https://www.linkedin.com/jobs/search/?keywords={encoded_query}"
+    
+    # 2. Build the exact payload the Apify Actor expects
     payload = {
-        "search_query": search_query,
-        "limit": limit
+        "urls": [linkedin_url],
+        "scrapeCompany": True,
+        "count": limit,
+        "splitByLocation": False,
+        "splitCountry": None
     }
     
     try:
