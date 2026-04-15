@@ -1,12 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from contextlib import asynccontextmanager
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-import pytz
+from datetime import datetime, timezone
 import os
-from datetime import datetime, timezone, timedelta
-from app.db.supabase import supabase
 
 from app.core.config import settings
 from app.services.scraper import run_linkedin_scraper
@@ -14,50 +10,12 @@ from app.services.contact_resolver import resolve_contact_waterfall
 from app.utils.helpers import extract_domain
 from app.services.orchestrator import run_daily_sourcing_pipeline
 from app.services.email_dispatcher import dispatch_application_email
-
-
-# =========================
-# 🔁 SCHEDULER FUNCTION
-# =========================
-async def scheduled_daily_scrape():
-    print("⏰ [SCHEDULER] Running automated job sourcing pipeline...")
-    try:
-        await run_daily_sourcing_pipeline(
-            user_id="ba39634f-467b-4320-857d-0557ba95e358",
-            search_query="Agentic AI Developer remote",
-            dummy_resume_text="I am a Software Engineer specializing in Python, RAG pipelines, and multi-agent systems."
-        )
-        print("✅ [SCHEDULER] Automated pipeline finished successfully.")
-    except Exception as e:
-        print(f"🚨 [SCHEDULER] Automated pipeline failed: {e}")
-
+from app.db.supabase import supabase
 
 # =========================
-# 🚀 APP LIFESPAN (Scheduler Start/Stop)
+# ⚡ FASTAPI INIT (NO SCHEDULER)
 # =========================
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    scheduler = AsyncIOScheduler(timezone=pytz.timezone('Asia/Kolkata'))
-
-    # Run at 9:00 AM
-    scheduler.add_job(scheduled_daily_scrape, 'cron', hour=9, minute=0)
-
-    # Run at 6:00 PM
-    scheduler.add_job(scheduled_daily_scrape, 'cron', hour=18, minute=0)
-
-    scheduler.start()
-    print("⏱️ Background Scheduler Started (Runs at 9 AM and 6 PM)")
-
-    yield
-
-    scheduler.shutdown()
-
-
-# =========================
-# ⚡ FASTAPI INIT (UPDATED)
-# =========================
-app = FastAPI(title="AutoHire Agent API", lifespan=lifespan)
-
+app = FastAPI(title="AutoHire Agent API")
 
 # =========================
 # 🌐 CORS CONFIG
@@ -74,7 +32,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 # =========================
 # 📦 REQUEST MODELS
 # =========================
@@ -82,18 +39,15 @@ class ScrapeRequest(BaseModel):
     query: str
     limit: int = 5
 
-
 class PipelineRequest(BaseModel):
     user_id: str
     search_query: str
     dummy_resume_text: str
 
-
 class DispatchRequest(BaseModel):
     application_id: str
     google_access_token: str
     google_refresh_token: str
-
 
 # =========================
 # 🩺 HEALTH CHECK
@@ -101,7 +55,6 @@ class DispatchRequest(BaseModel):
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "message": "AutoHire Engine Online"}
-
 
 # =========================
 # 🔍 SCRAPE JOBS
@@ -125,27 +78,37 @@ async def scrape_jobs(request: ScrapeRequest):
         "data": jobs
     }
 
-
 # =========================
-# ⚙️ TRIGGER PIPELINE (SECURE)
+# ⚙️ TRIGGER PIPELINE (SECURE 3/DAY)
 # =========================
 @app.post("/api/jobs/trigger-pipeline")
 async def trigger_pipeline(request: PipelineRequest):
-    # 1. Check the Database Lock
-    response = supabase.table("profiles").select("last_manual_scrape").eq("id", request.user_id).single().execute()
-    profile = response.data
+    # 1. Fetch current usage from Supabase
+    response = supabase.table("profiles").select("scrape_count, last_scrape_date").eq("id", request.user_id).single().execute()
+    profile = response.data or {}
 
-    if profile and profile.get("last_manual_scrape"):
-        last_scrape = datetime.fromisoformat(profile["last_manual_scrape"].replace("Z", "+00:00"))
-        if datetime.now(timezone.utc) < last_scrape + timedelta(hours=24):
-            return {"status": "error", "message": "Global 24-hour cooldown is active. Agents cannot be deployed."}
+    # 2. Check the Daily Limit (Max 3 per day)
+    today_str = datetime.now(timezone.utc).date().isoformat()
+    current_count = profile.get("scrape_count") or 0
+    last_date = profile.get("last_scrape_date")
 
-    # 2. Lock the Database IMMEDIATELY (Prevents double-click race conditions)
+    if last_date == today_str:
+        if current_count >= 3:
+            return {"status": "error", "message": "Daily limit reached. You can run the agent 3 times per day."}
+        new_count = current_count + 1
+    else:
+        # It's a new day! Reset the count to 1
+        new_count = 1
+
+    # 3. Lock the Database IMMEDIATELY to prevent double-clicks
     supabase.table("profiles").update(
-        {"last_manual_scrape": datetime.now(timezone.utc).isoformat()}
+        {
+            "scrape_count": new_count,
+            "last_scrape_date": today_str
+        }
     ).eq("id", request.user_id).execute()
 
-    # 3. Deploy Agents
+    # 4. Deploy Agents
     results = await run_daily_sourcing_pipeline(
         user_id=request.user_id,
         search_query=request.search_query,
@@ -155,7 +118,8 @@ async def trigger_pipeline(request: PipelineRequest):
     return {
         "status": "success",
         "message": "Background pipeline completed successfully.",
-        "processed_count": len(results)
+        "processed_count": len(results),
+        "runs_remaining": 3 - new_count
     }
 
 # =========================

@@ -28,60 +28,68 @@ export default function Dashboard() {
   const [editedBody, setEditedBody] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
-  // --- MANUAL TRIGGER STATE ---
+  // --- DYNAMIC SEARCH STATE ---
+  const [targetRole, setTargetRole] = useState("Agentic AI Developer");
+
+  // --- 3-PER-DAY CHARGE SYSTEM ---
   const [isTriggering, setIsTriggering] = useState(false);
-  const [cooldownRemaining, setCooldownRemaining] = useState<string | null>(null);
-  const [lastRunTime, setLastRunTime] = useState<number | null>(null); // NEW: Tracks DB time
+  const [runsRemaining, setRunsRemaining] = useState<number>(3);
+  const [timeUntilReset, setTimeUntilReset] = useState<string | null>(null);
 
   useEffect(() => {
     if (user) {
       fetchApplications();
-      fetchProfileData(); // Fetch the official timestamp when you log in
+      fetchProfileData(); 
     }
   }, [user]);
 
-  // NEW: Read the lock from Supabase
+  // Read the 3-charge limits from Supabase
   const fetchProfileData = async () => {
     if (!user) return;
     try {
-      const { data } = await supabase.from('profiles').select('last_manual_scrape').eq('id', user.id).single();
-      if (data?.last_manual_scrape) {
-        setLastRunTime(new Date(data.last_manual_scrape).getTime());
+      const { data } = await supabase.from('profiles').select('scrape_count, last_scrape_date').eq('id', user.id).single();
+      if (data) {
+        // Use UTC date to exactly match the backend's resetting clock
+        const todayStr = new Date().toISOString().split('T')[0];
+        
+        if (data.last_scrape_date === todayStr) {
+          // If they scraped today, calculate what is left
+          setRunsRemaining(Math.max(0, 3 - (data.scrape_count || 0)));
+        } else {
+          // If the date in DB doesn't match today, it's a new day. They have 3 charges.
+          setRunsRemaining(3);
+        }
       }
     } catch (err) {
       console.error("Failed to fetch profile data:", err);
     }
   };
 
-  // NEW: Calculate the countdown based on the Database time
+  // Calculate time until Midnight (when charges reset)
   useEffect(() => {
-    if (!lastRunTime) {
-      setCooldownRemaining(null);
+    if (runsRemaining > 0) {
+      setTimeUntilReset(null);
       return;
     }
 
-    const calculateCooldown = () => {
-      const timeSinceLastRun = Date.now() - lastRunTime;
-      const cooldownMs = 24 * 60 * 60 * 1000;
+    const calculateResetTime = () => {
+      const now = new Date();
+      // Find exact UTC midnight
+      const tomorrow = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+      const diffMs = tomorrow.getTime() - now.getTime();
 
-      if (timeSinceLastRun < cooldownMs) {
-        const msRemaining = cooldownMs - timeSinceLastRun;
-        const hours = Math.floor(msRemaining / (1000 * 60 * 60));
-        const minutes = Math.floor((msRemaining % (1000 * 60 * 60)) / (1000 * 60));
-        setCooldownRemaining(`${hours}h ${minutes}m`);
-      } else {
-        setCooldownRemaining(null);
-        setLastRunTime(null);
-      }
+      const hours = Math.floor(diffMs / (1000 * 60 * 60));
+      const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+      setTimeUntilReset(`${hours}h ${minutes}m`);
     };
 
-    calculateCooldown();
-    const interval = setInterval(calculateCooldown, 60000);
+    calculateResetTime();
+    const interval = setInterval(calculateResetTime, 60000);
     return () => clearInterval(interval);
-  }, [lastRunTime]);
+  }, [runsRemaining]);
 
   const handleManualTrigger = async () => {
-    if (cooldownRemaining || !user) return;
+    if (runsRemaining === 0 || !user) return;
     
     setIsTriggering(true);
     setError(null);
@@ -92,7 +100,7 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           user_id: user.id,
-          search_query: "Agentic AI Developer remote", 
+          search_query: targetRole, 
           dummy_resume_text: "I am a Software Engineer specializing in Python, RAG pipelines, and multi-agent systems."
         })
       });
@@ -102,8 +110,8 @@ export default function Dashboard() {
         throw new Error(result.message || "Pipeline trigger failed.");
       }
 
-      // Instantly lock the UI locally (Backend already locked the DB)
-      setLastRunTime(Date.now());
+      // Update the UI locally instantly to feel snappy
+      setRunsRemaining(prev => Math.max(0, prev - 1));
       
       setTimeout(() => {
         fetchApplications();
@@ -123,7 +131,7 @@ export default function Dashboard() {
       const { data, error } = await supabase
         .from('applications')
         .select('*')
-        .in('status', ['PENDING', 'FAILED']) // Only show actionable items
+        .in('status', ['PENDING', 'FAILED'])
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -150,7 +158,6 @@ export default function Dashboard() {
     setError(null);
 
     try {
-      // 1. Save edits to Supabase
       const { error: updateError } = await supabase
         .from('applications')
         .update({ ai_draft: { subject: editedSubject, body: editedBody } })
@@ -158,16 +165,13 @@ export default function Dashboard() {
 
       if (updateError) throw updateError;
 
-      // 2. Update local UI state
       setApplications(apps => apps.map(app => 
         app.id === appId ? { ...app, ai_draft: { subject: editedSubject, body: editedBody } } : app
       ));
 
-      // 3. Close modal and trigger email dispatch
       setReviewApp(null);
       await handleDispatch(appId);
       
-      // 4. Remove instantly from Pending screen (It moves to the Mission History page)
       setApplications(apps => apps.filter(app => app.id !== appId));
 
     } catch (err: any) {
@@ -240,23 +244,33 @@ export default function Dashboard() {
               <p className="text-zinc-400 mt-1">Review and approve your AI-generated outreach.</p>
             </div>
             
-            <div className="flex space-x-3">
-              {/* NEW MANUAL TRIGGER BUTTON */}
+            <div className="flex space-x-3 items-center">
+              {/* Dynamic Search Input */}
+              <input 
+                type="text" 
+                value={targetRole}
+                onChange={(e) => setTargetRole(e.target.value)}
+                placeholder="Target Job Title..."
+                className="px-4 py-2 bg-black border border-zinc-700 rounded-lg text-sm text-white focus:border-brand-cyan outline-none w-64"
+                disabled={runsRemaining === 0 || isTriggering}
+              />
+
+              {/* MANUAL TRIGGER BUTTON */}
               <button 
                 onClick={handleManualTrigger}
-                disabled={!!cooldownRemaining || isTriggering}
+                disabled={runsRemaining === 0 || isTriggering || !targetRole.trim()}
                 className={`px-4 py-2 flex items-center font-bold rounded-lg text-sm transition-all border ${
-                  cooldownRemaining || isTriggering 
+                  runsRemaining === 0 || isTriggering || !targetRole.trim()
                     ? 'bg-zinc-800 text-zinc-500 border-zinc-700 cursor-not-allowed' 
                     : 'bg-brand-cyan text-brand-black hover:bg-[#5ce0dd] border-brand-cyan shadow-[0_0_15px_rgba(34,211,238,0.2)]'
                 }`}
               >
                 {isTriggering ? (
-                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Deploying Agents...</>
-                ) : cooldownRemaining ? (
-                  <><Clock className="w-4 h-4 mr-2" /> Cooldown: {cooldownRemaining}</>
+                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Deploying...</>
+                ) : runsRemaining === 0 ? (
+                  <><Clock className="w-4 h-4 mr-2" /> Resets in {timeUntilReset}</>
                 ) : (
-                  <><Zap className="w-4 h-4 mr-2" /> Force Agent Run</>
+                  <><Zap className="w-4 h-4 mr-2" /> Force Agent Run ({runsRemaining}/3)</>
                 )}
               </button>
 
@@ -264,7 +278,7 @@ export default function Dashboard() {
                 onClick={fetchApplications}
                 className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm font-medium transition-colors border border-zinc-700"
               >
-                Refresh Intelligence
+                Refresh
               </button>
             </div>
           </div>
