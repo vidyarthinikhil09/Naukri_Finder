@@ -95,7 +95,7 @@ export default function Dashboard() {
     setError(null);
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/jobs/trigger-pipeline', {
+      const response = await fetch('https://naukri-finder.onrender.com/api/jobs/trigger-pipeline', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -195,7 +195,7 @@ export default function Dashboard() {
         throw new Error("Google OAuth tokens are missing. Please sign out and sign back in to grant Gmail permissions.");
       }
 
-      const response = await fetch('http://127.0.0.1:8000/api/jobs/dispatch', {
+      const response = await fetch('https://naukri-finder.onrender.com/api/jobs/dispatch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
