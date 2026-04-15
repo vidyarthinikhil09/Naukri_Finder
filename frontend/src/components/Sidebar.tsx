@@ -1,6 +1,6 @@
-import { LayoutDashboard, LogOut, User as UserIcon, Zap, Settings as SettingsIcon } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { NavLink } from 'react-router-dom';
+import { LayoutDashboard, LogOut, User as UserIcon, Zap, Settings as SettingsIcon, CheckSquare } from 'lucide-react';
 
 export default function Sidebar() {
   const { user, signOut } = useAuth();
@@ -28,6 +28,21 @@ export default function Sidebar() {
           >
             <LayoutDashboard className="mr-3 h-5 w-5 flex-shrink-0" />
             Applications
+          </NavLink>
+
+          {/* Add this right below the Dashboard NavLink */}
+          <NavLink
+            to="/applied"
+            className={({ isActive }) =>
+              `flex items-center px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 ${
+                isActive
+                  ? 'bg-brand-cyan/10 text-brand-cyan border border-brand-cyan/20 shadow-[inset_0_0_10px_rgba(116,240,237,0.05)]'
+                  : 'text-zinc-400 hover:bg-zinc-900 hover:text-white border border-transparent'
+              }`
+            }
+          >
+            <CheckSquare className="mr-3 h-5 w-5 flex-shrink-0" />
+            Applied Jobs
           </NavLink>
           
           <NavLink

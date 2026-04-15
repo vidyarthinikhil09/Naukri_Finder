@@ -4,6 +4,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Settings from './pages/Settings';
+import AppliedJobs from './pages/AppliedJobs';
 
 export default function App() {
   if (window.opener) {
@@ -28,6 +29,7 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route element={<ProtectedRoute />}>
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/applied" element={<AppliedJobs />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
         </Routes>
