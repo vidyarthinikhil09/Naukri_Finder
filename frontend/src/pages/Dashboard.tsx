@@ -31,39 +31,57 @@ export default function Dashboard() {
   // --- MANUAL TRIGGER STATE ---
   const [isTriggering, setIsTriggering] = useState(false);
   const [cooldownRemaining, setCooldownRemaining] = useState<string | null>(null);
+  const [lastRunTime, setLastRunTime] = useState<number | null>(null); // NEW: Tracks DB time
 
   useEffect(() => {
     if (user) {
       fetchApplications();
-      checkCooldown();
-      const interval = setInterval(checkCooldown, 60000); // Check cooldown every minute
-      return () => clearInterval(interval);
+      fetchProfileData(); // Fetch the official timestamp when you log in
     }
   }, [user]);
 
-  const checkCooldown = () => {
-    const lastRun = localStorage.getItem('last_manual_scrape');
-    if (!lastRun) {
+  // NEW: Read the lock from Supabase
+  const fetchProfileData = async () => {
+    if (!user) return;
+    try {
+      const { data } = await supabase.from('profiles').select('last_manual_scrape').eq('id', user.id).single();
+      if (data?.last_manual_scrape) {
+        setLastRunTime(new Date(data.last_manual_scrape).getTime());
+      }
+    } catch (err) {
+      console.error("Failed to fetch profile data:", err);
+    }
+  };
+
+  // NEW: Calculate the countdown based on the Database time
+  useEffect(() => {
+    if (!lastRunTime) {
       setCooldownRemaining(null);
       return;
     }
 
-    const timeSinceLastRun = Date.now() - parseInt(lastRun);
-    const cooldownMs = 24 * 60 * 60 * 1000; // 24 Hours in milliseconds
+    const calculateCooldown = () => {
+      const timeSinceLastRun = Date.now() - lastRunTime;
+      const cooldownMs = 24 * 60 * 60 * 1000;
 
-    if (timeSinceLastRun < cooldownMs) {
-      const msRemaining = cooldownMs - timeSinceLastRun;
-      const hours = Math.floor(msRemaining / (1000 * 60 * 60));
-      const minutes = Math.floor((msRemaining % (1000 * 60 * 60)) / (1000 * 60));
-      setCooldownRemaining(`${hours}h ${minutes}m`);
-    } else {
-      setCooldownRemaining(null);
-      localStorage.removeItem('last_manual_scrape');
-    }
-  };
+      if (timeSinceLastRun < cooldownMs) {
+        const msRemaining = cooldownMs - timeSinceLastRun;
+        const hours = Math.floor(msRemaining / (1000 * 60 * 60));
+        const minutes = Math.floor((msRemaining % (1000 * 60 * 60)) / (1000 * 60));
+        setCooldownRemaining(`${hours}h ${minutes}m`);
+      } else {
+        setCooldownRemaining(null);
+        setLastRunTime(null);
+      }
+    };
+
+    calculateCooldown();
+    const interval = setInterval(calculateCooldown, 60000);
+    return () => clearInterval(interval);
+  }, [lastRunTime]);
 
   const handleManualTrigger = async () => {
-    if (cooldownRemaining) return;
+    if (cooldownRemaining || !user) return;
     
     setIsTriggering(true);
     setError(null);
@@ -73,19 +91,20 @@ export default function Dashboard() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: user?.id,
+          user_id: user.id,
           search_query: "Agentic AI Developer remote", 
           dummy_resume_text: "I am a Software Engineer specializing in Python, RAG pipelines, and multi-agent systems."
         })
       });
 
-      if (!response.ok) throw new Error("Pipeline trigger failed. Ensure backend is running.");
+      const result = await response.json();
+      if (!response.ok || result.status === 'error') {
+        throw new Error(result.message || "Pipeline trigger failed.");
+      }
 
-      // Set the 24-hour lock
-      localStorage.setItem('last_manual_scrape', Date.now().toString());
-      checkCooldown();
+      // Instantly lock the UI locally (Backend already locked the DB)
+      setLastRunTime(Date.now());
       
-      // Give the backend a few seconds to finish scraping before refreshing the UI
       setTimeout(() => {
         fetchApplications();
         setIsTriggering(false);
@@ -139,11 +158,16 @@ export default function Dashboard() {
 
       if (updateError) throw updateError;
 
-      // 2. Close modal and trigger email dispatch
+      // 2. Update local UI state
+      setApplications(apps => apps.map(app => 
+        app.id === appId ? { ...app, ai_draft: { subject: editedSubject, body: editedBody } } : app
+      ));
+
+      // 3. Close modal and trigger email dispatch
       setReviewApp(null);
       await handleDispatch(appId);
       
-      // 3. Remove instantly from Pending screen (It moves to the Mission History page)
+      // 4. Remove instantly from Pending screen (It moves to the Mission History page)
       setApplications(apps => apps.filter(app => app.id !== appId));
 
     } catch (err: any) {
@@ -179,6 +203,10 @@ export default function Dashboard() {
 
       const result = await response.json();
       if (!response.ok || result.status === 'error') throw new Error(result.message || "Failed to dispatch email");
+
+      setApplications(apps => apps.map(app => 
+        app.id === applicationId ? { ...app, status: 'SENT' } : app
+      ));
 
     } catch (err: any) {
       console.error('Dispatch error:', err);

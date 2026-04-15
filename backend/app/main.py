@@ -5,6 +5,8 @@ from contextlib import asynccontextmanager
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import pytz
 import os
+from datetime import datetime, timezone, timedelta
+from app.db.supabase import supabase
 
 from app.core.config import settings
 from app.services.scraper import run_linkedin_scraper
@@ -125,10 +127,25 @@ async def scrape_jobs(request: ScrapeRequest):
 
 
 # =========================
-# ⚙️ TRIGGER PIPELINE
+# ⚙️ TRIGGER PIPELINE (SECURE)
 # =========================
 @app.post("/api/jobs/trigger-pipeline")
 async def trigger_pipeline(request: PipelineRequest):
+    # 1. Check the Database Lock
+    response = supabase.table("profiles").select("last_manual_scrape").eq("id", request.user_id).single().execute()
+    profile = response.data
+
+    if profile and profile.get("last_manual_scrape"):
+        last_scrape = datetime.fromisoformat(profile["last_manual_scrape"].replace("Z", "+00:00"))
+        if datetime.now(timezone.utc) < last_scrape + timedelta(hours=24):
+            return {"status": "error", "message": "Global 24-hour cooldown is active. Agents cannot be deployed."}
+
+    # 2. Lock the Database IMMEDIATELY (Prevents double-click race conditions)
+    supabase.table("profiles").update(
+        {"last_manual_scrape": datetime.now(timezone.utc).isoformat()}
+    ).eq("id", request.user_id).execute()
+
+    # 3. Deploy Agents
     results = await run_daily_sourcing_pipeline(
         user_id=request.user_id,
         search_query=request.search_query,
@@ -140,7 +157,6 @@ async def trigger_pipeline(request: PipelineRequest):
         "message": "Background pipeline completed successfully.",
         "processed_count": len(results)
     }
-
 
 # =========================
 # 📧 DISPATCH EMAIL
