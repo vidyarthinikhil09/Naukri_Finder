@@ -64,7 +64,8 @@ export default function Dashboard() {
       }
 
       // 2. Send the dispatch request to our FastAPI backend using the proxy setup in Vite
-      const response = await fetch('/api/jobs/dispatch', {
+
+      const response = await fetch('http://127.0.0.1:8000/api/jobs/dispatch', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

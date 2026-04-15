@@ -15,7 +15,7 @@ async def run_daily_sourcing_pipeline(user_id: str, search_query: str, dummy_res
     logger.info(f"Starting pipeline for user {user_id} with query '{search_query}'")
     
     # 1. Scrape jobs
-    jobs = await run_apify_scraper(search_query=search_query, limit=5)
+    jobs = await run_apify_scraper(search_query=search_query, limit=10)
     if not jobs:
         logger.warning("No jobs found by scraper.")
         return []
@@ -38,6 +38,7 @@ async def run_daily_sourcing_pipeline(user_id: str, search_query: str, dummy_res
         
         # 4. Format into Pydantic schema
         application_data = ApplicationCreate(
+            user_id=user_id,
             status=ApplicationStatus.PENDING,
             company_name=company_name,
             job_title=job_title,
