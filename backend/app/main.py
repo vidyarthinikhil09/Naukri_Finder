@@ -7,7 +7,7 @@ import pytz
 import os
 
 from app.core.config import settings
-from app.services.scraper import run_apify_scraper
+from app.services.scraper import run_linkedin_scraper
 from app.services.contact_resolver import resolve_contact_waterfall
 from app.utils.helpers import extract_domain
 from app.services.orchestrator import run_daily_sourcing_pipeline
@@ -106,7 +106,7 @@ async def health_check():
 # =========================
 @app.post("/api/jobs/scrape")
 async def scrape_jobs(request: ScrapeRequest):
-    jobs = await run_apify_scraper(search_query=request.query, limit=request.limit)
+    jobs = await run_linkedin_scraper(search_query=request.query, limit=request.limit)
 
     for job in jobs:
         company_name = job.get("company_name", "")

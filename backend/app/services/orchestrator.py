@@ -1,6 +1,6 @@
 import logging
 from app.db.supabase import supabase
-from app.services.scraper import run_apify_scraper
+from app.services.scraper import run_linkedin_scraper
 from app.services.contact_resolver import resolve_contact_waterfall
 from app.services.llm import generate_email_draft
 from app.utils.helpers import extract_domain
@@ -15,7 +15,7 @@ async def run_daily_sourcing_pipeline(user_id: str, search_query: str, dummy_res
     logger.info(f"Starting pipeline for user {user_id} with query '{search_query}'")
     
     # 1. Scrape jobs
-    jobs = await run_apify_scraper(search_query=search_query, limit=10)
+    jobs = await run_linkedin_scraper(search_query=search_query, limit=10)
     if not jobs:
         logger.warning("No jobs found by scraper.")
         return []
