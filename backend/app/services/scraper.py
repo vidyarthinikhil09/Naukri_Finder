@@ -1,3 +1,4 @@
+import urllib.parse
 from apify_client import ApifyClientAsync
 from app.core.config import settings
 
@@ -6,27 +7,37 @@ INDEED_ACTOR_ID = "TrtlecxAsNRbKl1na"
 
 async def run_linkedin_scraper(search_query: str, limit: int = 10) -> list[dict]:
     """
-    Runs the Apify LinkedIn scraper Actor.
+    Runs the Apify LinkedIn scraper Actor using constructed URLs.
     """
     client = ApifyClientAsync(settings.APIFY_TOKEN)
     
-    # We append the location directly to the query for LinkedIn to ensure strict matching
-    target_query = f"{search_query} Hyderabad Telangana"
+    # 1. FIX: Construct a valid LinkedIn Search URL
+    encoded_query = urllib.parse.quote(search_query)
+    encoded_location = urllib.parse.quote("Hyderabad, Telangana")
+    search_url = f"https://www.linkedin.com/jobs/search/?keywords={encoded_query}&location={encoded_location}"
     
+    # The Actor strictly requires 'urls' as the input field
     run_input = {
-        "queries": target_query,
-        "publishedAt": "Any time",
+        "urls": [search_url],
         "limit": limit,
     }
     
     try:
-        print(f"\n🚀 Starting LinkedIn Bot for: {target_query}")
+        print(f"\n🚀 Starting LinkedIn Bot for URL: {search_url}")
         run = await client.actor(LINKEDIN_ACTOR_ID).call(run_input=run_input)
         
         normalized_jobs = []
         async for item in client.dataset(run["defaultDatasetId"]).iterate_items():
             job_link = item.get("url") or item.get("link") or item.get("job_url") or item.get("jobUrl") or ""
-            company = item.get("companyName") or item.get("company") or "Unknown Company"
+            
+            # Safe extraction for company name
+            raw_company = item.get("companyName") or item.get("company")
+            company = "Unknown Company"
+            if isinstance(raw_company, dict):
+                company = raw_company.get("name", "Unknown Company")
+            elif isinstance(raw_company, str):
+                company = raw_company
+
             title = item.get("title") or item.get("positionName") or "Unknown Title"
 
             normalized_jobs.append({
@@ -52,11 +63,10 @@ async def run_indeed_scraper(search_query: str, limit: int = 5) -> list[dict]:
     """
     client = ApifyClientAsync(settings.APIFY_TOKEN)
     
-    # STRICT HYDERABAD TARGETING
     run_input = {
-        "country": "in",                      # Changed from "us" to "in" (India)
+        "country": "in",                      
         "title": search_query,
-        "location": "Hyderabad, Telangana",   # Locked to Hyderabad
+        "location": "Hyderabad, Telangana",   
         "limit": limit,
         "datePosted": "14", 
     }
@@ -68,7 +78,18 @@ async def run_indeed_scraper(search_query: str, limit: int = 5) -> list[dict]:
         normalized_jobs = []
         async for item in client.dataset(run["defaultDatasetId"]).iterate_items():
             job_link = item.get("url") or item.get("jobUrl") or ""
-            company = item.get("companyName") or item.get("company") or "Unknown Company"
+            
+            # 2. FIX: Handle deeply nested company objects from Indeed
+            raw_company = item.get("companyName") or item.get("company")
+            company = "Unknown Company"
+            
+            if isinstance(raw_company, dict):
+                # If Indeed returns {"name": "Google", "url": "..."}
+                company = raw_company.get("name", "Unknown Company")
+            elif isinstance(raw_company, str):
+                # If Indeed returns a simple string
+                company = raw_company
+
             title = item.get("title") or item.get("positionName") or item.get("jobTitle") or "Unknown Title"
 
             normalized_jobs.append({
